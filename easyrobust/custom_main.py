@@ -346,7 +346,7 @@ def main(args, args_text):
     print('train transforms: ', train_transform)
     print('test transforms: ', test_transform)
 
-    dataset_train = torchvision.datasets.ImageFolder(os.path.join(args.data_dir, 'val'), transform=train_transform)
+    dataset_train = torchvision.datasets.ImageFolder(os.path.join(args.data_dir, 'train'), transform=train_transform)
     dataset_val = torchvision.datasets.ImageFolder(os.path.join(args.data_dir, 'val'), transform=test_transform)
 
     sampler_train = torch.utils.data.DistributedSampler(
