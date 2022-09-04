@@ -757,7 +757,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                 log_name, batch_idx, last_idx, batch_time=batch_time_m,
                 loss=losses_m, top1=top1_m, top5=top5_m, advtop1=adv_top1_m))
 
-    metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
+    metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),('adv_top1', adv_top1_m.avg)])
 
     return metrics
 

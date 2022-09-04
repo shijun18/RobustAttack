@@ -1,13 +1,13 @@
 # user need to provide training data dirs & output dirs
 data_dir: '/acsa-med/radiology/imagenet/ILSVRC2012'
-output_dir: 'output'
+output_dir: 'scratch_output'
 
 # basic parameters
 epochs: 300
 batch_size: 64
-pretrained: '/staff/zzq/code/diffusionImageNet/train/ckpt/pretrained_model/swin_large_patch4_window7_224_22kto1k.pth'
+pretrained: ''
 seed: 42
-resume: '/staff/shijun/torch_projects/RobustAttack/easyrobust/output/last.pth.tar'
+resume: ''
 eval: False
 pin_mem: True
 log_interval: 50
@@ -52,12 +52,12 @@ weight_decay: 0.05
 
 # Learning rate schedule parameters
 sched: cosine
-lr: 0.001
+lr: 2.5e-4
 lr_noise: null
 lr_noise_pct: 0.67
 lr_noise_std: 1.0
-warmup_lr: 1.0e-6
-min_lr: 1.0e-5
+warmup_lr: 1.0e-7
+min_lr: 1.0e-6
 decay_epochs: 30
 warmup_epochs: 5
 cooldown_epochs: 10

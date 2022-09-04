@@ -1,3 +1,5 @@
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
@@ -6,7 +8,7 @@ os.environ['TORCH_HOME']=os.path.join(os.path.dirname(os.path.abspath(os.path.di
 import time
 import numpy as np
 import timm
-import third_party.efficientnet_pytorch
+from third_party import efficientnet_pytorch
 from torchvision import transforms
 import torch
 from pytorch_ares.attack_torch import *
@@ -15,6 +17,7 @@ import torch.nn.functional as F
 from PIL import Image
 import time
 import math
+from torch.cuda.amp import autocast as autocast
 
 class timm_model(torch.nn.Module):
     def __init__(self,device,model):
@@ -187,19 +190,24 @@ def test(args):
     val_dataset = ImageNetDataset(args.data_dir, args.label_file, transform=transforms.Compose(val_transforms))
     test_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=args.batchsize, num_workers=1, 
+        batch_size=args.batchsize, num_workers=8, 
         shuffle=False, pin_memory=True, drop_last=False)
 
     # initialize attacker
     attack=generate_attacker(args, net, device)
 
     # transfer models
-    transfer_models=['vgg16', 'vgg19', 'tv_resnet50', 'tv_resnet101', 'tv_resnet152',
-        'densenet201', 'legacy_senet154', 'inception_v3', 'inception_v4', 'inception_resnet_v2', 
-        'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3', 'efficientnet-b4', 'efficientnet-b5', 
-        'efficientnet-b6', 'efficientnet-b7', 'vit_small_patch16_224', 'vit_base_patch16_224', 
-        'swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
+    # transfer_models=['vgg16', 'vgg19', 'tv_resnet50', 'tv_resnet101', 'tv_resnet152',
+    #     'densenet201', 'legacy_senet154', 'inception_v3', 'inception_v4', 'inception_resnet_v2', 
+    #     'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3', 'efficientnet-b4', 'efficientnet-b5', 
+    #     'efficientnet-b6', 'efficientnet-b7', 'vit_small_patch16_224', 'vit_base_patch16_224', 
+    #     'swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
 
+    # transfer_models=['tv_resnet50', 'tv_resnet152',
+    #     'densenet201', 'efficientnet-b2', 'efficientnet-b5', 
+    #     'vit_small_patch16_224', 'vit_base_patch16_224','swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
+
+    transfer_models=['efficientnet-b2']
     success_num = 0
     test_num= 0
     # true_classified_num=0
@@ -222,9 +230,9 @@ def test(args):
         with torch.no_grad():
             if not args.attack_name=='cda':
                 # test clean acc and asr
-                out = net(image)
-
-                out_adv = net(adv_image)
+                with autocast(True):
+                    out = net(image)
+                    out_adv = net(adv_image)
 
                 out_adv = torch.argmax(out_adv, dim=1)
                 out = torch.argmax(out, dim=1)
@@ -257,6 +265,7 @@ def test(args):
                     averages[transfer_model].update((transfer_pred==target_labels).sum().item()/batchsize, batchsize)
                 else:
                     averages[transfer_model].update((transfer_pred!=labels).sum().item()/batchsize, batchsize)
+                print('Epoch %d: %s %.2f %%' %(1,transfer_model, averages[transfer_model].avg*100))
         end_time=time.time()
         print('Time of one epoch: %f' %(end_time-start_time))
     if not args.attack_name=='cda':
@@ -286,10 +295,10 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', default=os.path.join(os.path.dirname(os.path.abspath(os.path.dirname(__file__))),'data/val'), help= 'Dataset directory')
     parser.add_argument('--label_file', default=os.path.join(os.path.dirname(os.path.abspath(os.path.dirname(__file__))),'data/imagenet_val.txt'), help= 'Dataset directory')
     parser.add_argument('--net_name', default='tv_resnet50', help= 'net_name for sgm', choices= ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'])
-    parser.add_argument('--batchsize', default=10, help= 'batchsize for this model')
+    parser.add_argument('--batchsize', default=20, help= 'batchsize for this model')
     parser.add_argument('--attack_name', default='fgsm', help= 'Dataset for this model', choices= ['fgsm', 'bim', 'pgd','mim','si_ni_fgsm','vmi_fgsm','sgm', 'dim', 'tim', 'deepfool', 'cw','tta'])
     
-    parser.add_argument('--target_name', default='inception_v3', help= 'target model', choices= ['resnet50', 'vgg16', 'inception_v3', 'swin_base_patch4_window7_224'])
+    parser.add_argument('--target_name', default='inception_v3', help= 'target model', choices= ['swin_large_patch4_window7_224','resnet50', 'vgg16', 'inception_v3', 'swin_base_patch4_window7_224'])
 
     parser.add_argument('--eps', type= float, default=8/255, help='linf: 8/255.0 and l2: 3.0')
     parser.add_argument('--stepsize', type= float, default=8/255/20, help='linf: 8/2550.0 and l2: (2.5*eps)/steps that is 0.075')
