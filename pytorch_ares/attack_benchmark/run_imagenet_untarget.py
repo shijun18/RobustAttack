@@ -203,11 +203,12 @@ def test(args):
     #     'efficientnet-b6', 'efficientnet-b7', 'vit_small_patch16_224', 'vit_base_patch16_224', 
     #     'swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
 
-    # transfer_models=['tv_resnet50', 'tv_resnet152',
-    #     'densenet201', 'efficientnet-b2', 'efficientnet-b5', 
-    #     'vit_small_patch16_224', 'vit_base_patch16_224','swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
 
-    transfer_models=['efficientnet-b2']
+    transfer_models=['vgg16', 'vgg19','tv_resnet50','densenet169','densenet201','inception_v3', 'inception_v4', 'inception_resnet_v2', 
+        'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3', 'efficientnet-b4', 'efficientnet-b5', 
+        'efficientnet-b6', 'efficientnet-b7',]
+    # transfer_models=['tv_resnet101', 'tv_resnet152','legacy_senet154','vit_small_patch16_224', 'vit_base_patch16_224', 
+    #     'swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
     success_num = 0
     test_num= 0
     # true_classified_num=0
