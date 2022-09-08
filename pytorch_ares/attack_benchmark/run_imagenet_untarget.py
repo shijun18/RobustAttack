@@ -18,6 +18,44 @@ from PIL import Image
 import time
 import math
 from torch.cuda.amp import autocast as autocast
+import torch.nn as nn
+
+
+class Normalize(nn.Module):
+    def __init__(self, mean, std) :
+        super(Normalize, self).__init__()
+        self.register_buffer('mean', torch.Tensor(mean))
+        self.register_buffer('std', torch.Tensor(std))
+        
+    def forward(self, input):
+        # Broadcasting
+        mean = self.mean.reshape(1, 3, 1, 1)
+        std = self.std.reshape(1, 3, 1, 1)
+        return (input - mean) / std
+
+
+class BitCompress(nn.Module):
+    def __init__(self, compress_bit=16) :
+        super(BitCompress, self).__init__()
+        self.compress_bit = compress_bit
+        self.factor = 512/compress_bit
+        self.register_buffer('compressbit', torch.Tensor(compress_bit))
+        
+    def forward(self, input):
+        # Broadcasting
+        # input: tensor, (0.0-1.0), N,C,H,W
+        N,C,H,W = input.size()
+        input = input.view(-1) * 255.0 # N*C*H*W
+        input = self.compress(input) / self.compress_bit
+        input = input.view(N,C,H,W)
+        return input
+    
+    def compress(self,x):
+        ans = 0
+        for i in range(1,self.compress_bit+1):
+            ans += 1/(1 + ((20)**(-200*(x/(self.factor*i-1)-0.5))))
+        return ans
+
 
 class timm_model(torch.nn.Module):
     def __init__(self,device,model):
@@ -37,6 +75,29 @@ class timm_model(torch.nn.Module):
         x = (x - self.mean) / self.std
         labels = self.model(x.to(self.device))
         return labels
+
+
+
+class timm_model_custom(torch.nn.Module):
+    def __init__(self,device,model):
+        torch.nn.Module.__init__(self)
+        self.device=device
+        self.input_size = model.default_cfg['input_size'][1]
+        self.interpolation = model.default_cfg['interpolation']
+        self.crop_pct = model.default_cfg['crop_pct']
+        self.mean= model.default_cfg['mean']
+        self.std= model.default_cfg['std']
+        bit_compress_layer = BitCompress(compress_bit=16)
+        norm_layer = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        self.model = torch.nn.Sequential(bit_compress_layer,norm_layer,model)
+        self.model = self.model.to(self.device)
+
+    def forward(self, x):
+        labels = self.model(x.to(self.device))
+        return labels
+
+
+
 
 class efficientnet_model(torch.nn.Module):
     def __init__(self,device,model):
@@ -174,8 +235,17 @@ def test(args):
     net=None
     test_loader=None
 
-    test_net = timm.create_model(args.target_name, pretrained=True)
-    net = timm_model(device, test_net)
+    if not args.non_benchmark:
+        print(">>>>> benchmark testing:%s"%args.target_name)
+        test_net = timm.create_model(args.target_name, pretrained=True)
+        net = timm_model(device, test_net)
+        
+    else:
+        print(">>>>> non benchmark testing:%s"%args.target_name)
+        test_net = timm.create_model(args.target_name, pretrained=False)
+        net = timm_model_custom(device, test_net)
+        msg = net.model.load_state_dict(torch.load(args.ckpt_path,map_location='cpu')['state_dict'], strict=False)
+        print(msg)
     input_size = net.input_size
     crop_pct = net.crop_pct
     interpolation = net.interpolation
@@ -204,11 +274,12 @@ def test(args):
     #     'swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
 
 
-    transfer_models=['vgg16', 'vgg19','tv_resnet50','densenet169','densenet201','inception_v3', 'inception_v4', 'inception_resnet_v2', 
-        'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3', 'efficientnet-b4', 'efficientnet-b5', 
-        'efficientnet-b6', 'efficientnet-b7',]
+    # transfer_models=['vgg16', 'vgg19','tv_resnet50','densenet169','densenet201','inception_v3', 'inception_v4', 'inception_resnet_v2', 
+    #     'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3', 'efficientnet-b4', 'efficientnet-b5', 
+    #     'efficientnet-b6', 'efficientnet-b7',]
     # transfer_models=['tv_resnet101', 'tv_resnet152','legacy_senet154','vit_small_patch16_224', 'vit_base_patch16_224', 
     #     'swin_tiny_patch4_window7_224', 'swin_base_patch4_window7_224']
+    transfer_models=['tv_resnet152']
     success_num = 0
     test_num= 0
     # true_classified_num=0
@@ -290,7 +361,9 @@ if __name__ == "__main__":
     parser.add_argument('--dataset_name', default='imagenet', help= 'Dataset for this model', choices= ['cifar10', 'imagenet'])
     parser.add_argument('--crop_pct', type=float, default=0.875, help='Input image center crop percent') 
     parser.add_argument('--input_size', type=int, default=224, help='Input image size') 
-    parser.add_argument('--interpolation', type=str, default='bilinear', choices=['bilinear', 'bicubic'], help='') 
+    parser.add_argument('--interpolation', type=str, default='bilinear', choices=['bilinear', 'bicubic'], help='')
+    parser.add_argument('--non_benchmark', action='store_true')  
+    parser.add_argument('--ckpt_path', type=str)
 
     parser.add_argument('--norm', default=np.inf, help='You can choose np.inf and 2(l2), l2 support all methods and linf dont support cw and deepfool', choices=[np.inf, 2])
     parser.add_argument('--data_dir', default=os.path.join(os.path.dirname(os.path.abspath(os.path.dirname(__file__))),'data/val'), help= 'Dataset directory')
@@ -299,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument('--batchsize', default=20, help= 'batchsize for this model')
     parser.add_argument('--attack_name', default='fgsm', help= 'Dataset for this model', choices= ['fgsm', 'bim', 'pgd','mim','si_ni_fgsm','vmi_fgsm','sgm', 'dim', 'tim', 'deepfool', 'cw','tta'])
     
-    parser.add_argument('--target_name', default='inception_v3', help= 'target model', choices= ['swin_large_patch4_window7_224','resnet50', 'vgg16', 'inception_v3', 'swin_base_patch4_window7_224'])
+    parser.add_argument('--target_name', default='inception_v3', help= 'target model', choices= ['tv_resnet152','swin_large_patch4_window7_224','resnet50', 'vgg16', 'inception_v3', 'swin_base_patch4_window7_224'])
 
     parser.add_argument('--eps', type= float, default=8/255, help='linf: 8/255.0 and l2: 3.0')
     parser.add_argument('--stepsize', type= float, default=8/255/20, help='linf: 8/2550.0 and l2: (2.5*eps)/steps that is 0.075')

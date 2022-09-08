@@ -12,7 +12,6 @@ from collections import OrderedDict
 # torchvision func
 import torchvision
 from torchvision import transforms
-
 # timm func
 from timm.data import Mixup, IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data.transforms_factory import create_transform
@@ -26,7 +25,7 @@ from timm.utils import NativeScaler, get_state_dict, ModelEma, distribute_bn, Av
 from easyrobust.models.layers import convert_switchablebn_model, convert_padain_model, cn_op_2ins_space_chan
 from easyrobust.activation import LP_ReLU2
 from easyrobust.data import StyleTransfer
-from easyrobust.utils import NormalizeByChannelMeanStd, Lighting, adv_generator, adv_generator_random_target
+from easyrobust.utils import NormalizeByChannelMeanStd, Lighting, adv_generator, adv_generator_random_target,BitCompress,Normalize
 import easyrobust.models
 from third_party.autoattack.autoattack import AutoAttack
 
@@ -199,9 +198,10 @@ def get_args_parser():
     parser.add_argument('--use_apex_amp', action='store_true', help='use apex amp')
 
     # EasyRobust training parameters
-    parser.add_argument('--training_mode', default='regular', choices=['regular', 'advtrain', 'advprop', 'padain', 'debiased', 'crossnorm', 'pyramid_advtrain'])
+    parser.add_argument('--training_mode', default='regular', choices=['regular', 'advtrain', 'advprop', 'padain', 'debiased', 'crossnorm', 'pyramid_advtrain','autoattack','bit_compress'])
     parser.add_argument('--attack_steps', default=1, type=int)
     parser.add_argument('--n_queries', default=5000, type=int)
+    parser.add_argument('--bits', default=16, type=int)
     parser.add_argument('--attack_version', default='standard', choices=['standard', 'plus', 'rand'])
     # default args for some specific training mode
     parser.add_argument('--padain', default=0.01, type=float, help='default args for: Permuted AdaIN: Reducing the Bias Towards Global Statistics in Image Classification')
@@ -302,7 +302,7 @@ def main(args, args_text):
         train_transform.transforms[0] = transforms.RandomCrop(
             args.input_size, padding=4)
 
-    if args.training_mode in ['advtrain', 'pyramid_advtrain', 'advprop']:
+    if args.training_mode in ['advtrain', 'pyramid_advtrain', 'advprop', 'bit_compress']:
         # denormalize the input
         train_transform.transforms.append(transforms.Normalize(
                 mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
@@ -339,7 +339,7 @@ def main(args, args_text):
             transforms.Resize(args.input_size, interpolation=3),
         )
     t.append(transforms.ToTensor())
-    if args.training_mode not in ['advtrain', 'advprop', 'pyramid_advtrain']:
+    if args.training_mode not in ['advtrain', 'advprop', 'pyramid_advtrain', 'bit_compress']:
         t.append(transforms.Normalize(args.mean, args.std))
     test_transform = transforms.Compose(t)
 
@@ -397,6 +397,7 @@ def main(args, args_text):
             drop_path_rate=args.drop_path,
             drop_block_rate=None
         )
+
     # style transfer augment
     style_transfer = None
     if args.training_mode == 'advprop':
@@ -414,7 +415,8 @@ def main(args, args_text):
         else:
             checkpoint = torch.load(args.pretrained, map_location='cpu')
 
-        checkpoint_model = checkpoint['model']
+        # checkpoint_model = checkpoint['model']
+        checkpoint_model = checkpoint
         state_dict = model.state_dict()
         for k in ['head.weight', 'head.bias']:
             if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
@@ -428,6 +430,12 @@ def main(args, args_text):
         normalize = NormalizeByChannelMeanStd(
                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         model = torch.nn.Sequential(normalize, model)
+    
+    elif args.training_mode == 'bit_compress':
+        bit_compress_layer = BitCompress(compress_bit=args.bits)
+        norm_layer = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        model = torch.nn.Sequential(bit_compress_layer,norm_layer,model)
+
     model.to(device)
 
     # linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
@@ -604,7 +612,7 @@ def train_one_epoch(
             target = one_hot(target[0], args.num_classes) * (1-target[2][:,None]) + one_hot(target[1], args.num_classes) * target[2][:,None]
 
         
-        if args.training_mode == 'advtrain':
+        if args.training_mode in ['advtrain']:
             input = adv_generator(input, target, model, 4/255, 3, 8/255/3, random_start=False, gpu=args.gpu, attack_criterion=args.attack_criterion)
         elif args.training_mode == 'pyramid_advtrain':
             adv_input = adv_generator_random_target(input, target, model, 4/255, 3, 8/255/3, random_start=True, gpu=args.gpu)
